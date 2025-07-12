@@ -1,0 +1,193 @@
+# Base configuration for Informer Option Pricing Model
+name: informer-option-pricing
+version: 0.1.0
+
+# Data configuration
+data:
+  csv_path: "data/sample_option_data.csv"
+  freq: "h"
+  target_col: "precio_opcion"
+  
+  # Data splits
+  train_ratio: 0.7
+  val_ratio: 0.2
+  test_ratio: 0.1
+  
+  # Preprocessing
+  normalize: true
+  scale_method: "standard"  # standard, minmax, robust
+  
+  # Features
+  feature_columns:
+    - precio_subyacente
+    - volatilidad_implicita
+    - tiempo_hasta_vencimiento
+    - precio_ejercicio
+    - tipo_opcion
+    - precio_opcion
+  
+  # Time features
+  time_features:
+    - month
+    - day
+    - weekday
+
+# Model configuration
+model:
+  # Architecture parameters
+  d_model: 512
+  n_heads: 8
+  e_layers: 2
+  d_layers: 1
+  d_ff: 2048
+  dropout: 0.1
+  factor: 5
+  distil: true
+  activation: "gelu"
+  
+  # Input/output dimensions
+  enc_in: 6
+  dec_in: 6
+  c_out: 6
+  
+  # Sequence parameters
+  seq_len: 96
+  label_len: 48
+  pred_len: 96
+
+# Training configuration
+training:
+  batch_size: 32
+  learning_rate: 1e-4
+  epochs: 100
+  patience: 7
+  weight_decay: 1e-4
+  warmup_steps: 4000
+  
+  # Loss and optimization
+  loss_fn: "mse"  # mse, mae, huber, quantile
+  optimizer: "adamw"  # adam, adamw, sgd, rmsprop
+  scheduler: "cosine"  # step, cosine, plateau, none
+  
+  # Regularization
+  gradient_clip_val: 1.0
+  label_smoothing: 0.0
+  
+  # Performance optimizations
+  use_amp: true
+  use_compile: true
+  use_checkpointing: false
+  num_workers: 4
+  pin_memory: true
+
+# Optimization configuration
+optimization:
+  # Attention optimization
+  attention_type: "flash"  # flash, xformers, vanilla
+  use_flash_attn: true
+  
+  # Model compilation
+  compile_mode: "default"  # default, reduce-overhead, max-autotune
+  compile_fullgraph: false
+  
+  # Memory optimization
+  memory_efficient: true
+  offload_to_cpu: false
+  
+  # Distributed training
+  use_ddp: false
+  find_unused_parameters: false
+
+# Experiment configuration
+experiment:
+  experiment_name: "informer-option-pricing"
+  run_name: null
+  tags: []
+  
+  # Logging
+  log_level: "INFO"
+  log_every_n_steps: 100
+  save_every_n_epochs: 10
+  
+  # Paths
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"
+  model_save_path: "best_model.pth"
+
+# Device configuration
+device: "auto"  # auto, cpu, cuda, cuda:0, etc.
+seed: 42
+
+# Monitoring and tracking
+monitoring:
+  use_mlflow: true
+  use_wandb: false
+  use_tensorboard: true
+  
+  # Metrics to track
+  metrics:
+    - train_loss
+    - val_loss
+    - val_mae
+    - val_mse
+    - val_rmse
+    - val_da  # directional accuracy
+    - learning_rate
+    - gpu_memory_usage
+    - training_time
+
+# Callbacks
+callbacks:
+  early_stopping:
+    monitor: "val_loss"
+    patience: 7
+    min_delta: 1e-6
+    mode: "min"
+    verbose: true
+  
+  model_checkpoint:
+    monitor: "val_loss"
+    save_best_only: true
+    save_weights_only: false
+    mode: "min"
+    verbose: true
+  
+  reduce_lr_on_plateau:
+    monitor: "val_loss"
+    factor: 0.5
+    patience: 3
+    min_lr: 1e-7
+    mode: "min"
+    verbose: true
+
+# Hyperparameter ranges for optimization
+hyperparameter_ranges:
+  learning_rate:
+    type: "log_uniform"
+    low: 1e-5
+    high: 1e-2
+  
+  batch_size:
+    type: "choice"
+    values: [16, 32, 64, 128]
+  
+  d_model:
+    type: "choice"
+    values: [256, 512, 768, 1024]
+  
+  n_heads:
+    type: "choice"
+    values: [4, 8, 16]
+  
+  dropout:
+    type: "uniform"
+    low: 0.05
+    high: 0.3
+  
+  seq_len:
+    type: "choice"
+    values: [48, 96, 192]
+  
+  pred_len:
+    type: "choice"
+    values: [24, 48, 96]

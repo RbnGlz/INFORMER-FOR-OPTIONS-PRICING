@@ -1,0 +1,259 @@
+version: '3.8'
+
+services:
+  # Development environment with Jupyter
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: informer-dev
+    ports:
+      - "8888:8888"  # Jupyter Lab
+      - "6006:6006"  # TensorBoard
+      - "5000:5000"  # MLflow UI
+    volumes:
+      - .:/app
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./checkpoints:/app/checkpoints
+      - ./experiments:/app/experiments
+      - ./notebooks:/app/notebooks
+    environment:
+      - PYTHONPATH=/app
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=informer-dev
+    networks:
+      - informer-network
+    profiles:
+      - dev
+    restart: unless-stopped
+
+  # Training service
+  train:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: informer-train
+    volumes:
+      - ./data:/app/data:ro
+      - ./logs:/app/logs
+      - ./checkpoints:/app/checkpoints
+      - ./experiments:/app/experiments
+      - ./configs:/app/configs:ro
+    environment:
+      - PYTHONPATH=/app
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      - mlflow
+    networks:
+      - informer-network
+    profiles:
+      - train
+    restart: "no"
+
+  # GPU Training service
+  train-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: gpu
+    container_name: informer-train-gpu
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - PYTHONPATH=/app
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    volumes:
+      - ./data:/app/data:ro
+      - ./logs:/app/logs
+      - ./checkpoints:/app/checkpoints
+      - ./experiments:/app/experiments
+      - ./configs:/app/configs:ro
+    depends_on:
+      - mlflow
+    networks:
+      - informer-network
+    profiles:
+      - gpu
+    restart: "no"
+
+  # Inference API service
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: inference
+    container_name: informer-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./checkpoints:/app/checkpoints:ro
+      - ./logs:/app/logs
+    environment:
+      - PYTHONPATH=/app
+      - MODEL_PATH=/app/checkpoints/best_model.pth
+    networks:
+      - informer-network
+    profiles:
+      - api
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # MLflow tracking server
+  mlflow:
+    image: python:3.10-slim
+    container_name: informer-mlflow
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./experiments:/app/experiments
+      - ./mlflow_artifacts:/app/mlflow_artifacts
+    environment:
+      - MLFLOW_BACKEND_STORE_URI=sqlite:///app/experiments/mlflow.db
+      - MLFLOW_DEFAULT_ARTIFACT_ROOT=/app/mlflow_artifacts
+    command: >
+      sh -c "
+      pip install mlflow[extras]>=2.8.0 &&
+      mlflow server 
+      --backend-store-uri sqlite:///app/experiments/mlflow.db
+      --default-artifact-root /app/mlflow_artifacts
+      --host 0.0.0.0
+      --port 5000
+      "
+    networks:
+      - informer-network
+    profiles:
+      - train
+      - gpu
+      - api
+    restart: unless-stopped
+
+  # TensorBoard service
+  tensorboard:
+    image: tensorflow/tensorflow:2.13.0
+    container_name: informer-tensorboard
+    ports:
+      - "6006:6006"
+    volumes:
+      - ./logs:/app/logs:ro
+    command: tensorboard --logdir=/app/logs --host=0.0.0.0 --port=6006
+    networks:
+      - informer-network
+    profiles:
+      - dev
+      - train
+      - gpu
+    restart: unless-stopped
+
+  # Monitoring service (optional)
+  monitor:
+    image: prom/prometheus:latest
+    container_name: informer-monitor
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - informer-network
+    profiles:
+      - monitor
+    restart: unless-stopped
+
+  # Database for experiment tracking (optional)
+  postgres:
+    image: postgres:15
+    container_name: informer-postgres
+    environment:
+      - POSTGRES_DB=informer
+      - POSTGRES_USER=informer
+      - POSTGRES_PASSWORD=informer_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - informer-network
+    profiles:
+      - db
+    restart: unless-stopped
+
+  # Redis for caching (optional)
+  redis:
+    image: redis:7-alpine
+    container_name: informer-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - informer-network
+    profiles:
+      - cache
+    restart: unless-stopped
+
+  # Data preprocessing service
+  preprocess:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: informer-preprocess
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./configs:/app/configs:ro
+    environment:
+      - PYTHONPATH=/app
+    command: python scripts/preprocess.py
+    networks:
+      - informer-network
+    profiles:
+      - preprocess
+    restart: "no"
+
+  # Model evaluation service
+  evaluate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: informer-evaluate
+    volumes:
+      - ./data:/app/data:ro
+      - ./checkpoints:/app/checkpoints:ro
+      - ./logs:/app/logs
+      - ./experiments:/app/experiments
+      - ./configs:/app/configs:ro
+    environment:
+      - PYTHONPATH=/app
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      - mlflow
+    command: python scripts/evaluate.py
+    networks:
+      - informer-network
+    profiles:
+      - evaluate
+    restart: "no"
+
+networks:
+  informer-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
